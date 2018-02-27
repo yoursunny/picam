@@ -10,6 +10,8 @@ class Handler(BaseHTTPRequestHandler):
             self.handleRobotsTxt()
         elif self.path == '/cam.jpg':
             self.handleCamJpg()
+        elif self.path == '/cam.mjpeg':
+            self.handleCamMjpeg()
         else:
             self.send_response(404)
             self.end_headers()
@@ -30,6 +32,27 @@ class Handler(BaseHTTPRequestHandler):
             camera.start_preview()
             time.sleep(1)
             camera.capture(self.wfile, 'jpeg')
+        finally:
+            camera.close()
+
+    def handleCamMjpeg(self):
+        boundary = 'eb4154aac1c9ee636b8a6f5622176d1fbc08d382ee161bbd42e8483808c684b6'
+        frameBeg = 'Content-Type: image/jpeg\n\n'.encode('ascii')
+        frameEnd = ('\n--' + boundary + '\n').encode('ascii')
+        self.send_response(200)
+        self.send_header(
+            'Content-Type', 'multipart/x-mixed-replace;boundary=' + boundary)
+        self.end_headers()
+        camera = PiCamera()
+        try:
+            camera.resolution = (320, 240)
+            camera.start_preview()
+            time.sleep(1)
+            while True:
+                self.wfile.write(frameBeg)
+                camera.capture(self.wfile, 'jpeg')
+                self.wfile.write(frameEnd)
+                self.wfile.flush()
         finally:
             camera.close()
 
