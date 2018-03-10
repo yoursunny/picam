@@ -4,7 +4,27 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from picamera import PiCamera
 
 
-class Handler(BaseHTTPRequestHandler):
+class MjpegMixin:
+    """
+    Add MJPEG features to a subclass of BaseHTTPRequestHandler.
+    """
+
+    mjpegBound = 'eb4154aac1c9ee636b8a6f5622176d1fbc08d382ee161bbd42e8483808c684b6'
+    frameBegin = 'Content-Type: image/jpeg\n\n'.encode('ascii')
+    frameBound = ('\n--' + mjpegBound + '\n').encode('ascii') + frameBegin
+
+    def mjpegBegin(self):
+        self.send_response(200)
+        self.send_header('Content-Type',
+                         'multipart/x-mixed-replace;boundary=' + MjpegMixin.mjpegBound)
+        self.end_headers()
+        self.wfile.write(MjpegMixin.frameBegin)
+
+    def mjpegEndFrame(self):
+        self.wfile.write(MjpegMixin.frameBound)
+
+
+class Handler(BaseHTTPRequestHandler, MjpegMixin):
     def do_GET(self):
         if self.path == '/robots.txt':
             self.handleRobotsTxt()
@@ -31,20 +51,13 @@ class Handler(BaseHTTPRequestHandler):
             camera.capture(self.wfile, format='jpeg')
 
     def handleCamMjpeg(self):
-        boundary = 'eb4154aac1c9ee636b8a6f5622176d1fbc08d382ee161bbd42e8483808c684b6'
-        frameBegin = 'Content-Type: image/jpeg\n\n'.encode('ascii')
-        frameBound = ('\n--' + boundary + '\n').encode('ascii') + frameBegin
-        self.send_response(200)
-        self.send_header(
-            'Content-Type', 'multipart/x-mixed-replace;boundary=' + boundary)
-        self.end_headers()
+        self.mjpegBegin()
         with PiCamera() as camera:
             camera.resolution = (640, 480)
             time.sleep(1)
-            self.wfile.write(frameBegin)
             for dummy in camera.capture_continuous(self.wfile, format='jpeg',
                                                    use_video_port=True, quality=50):
-                self.wfile.write(frameBound)
+                self.mjpegEndFrame()
 
 
 def run(port=8000):
