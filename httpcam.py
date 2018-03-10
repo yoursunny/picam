@@ -47,10 +47,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(frameBound)
 
 
-def run():
-    httpd = HTTPServer(('', 8000), Handler)
+def run(port=8000):
+    httpd = HTTPServer(('', port), Handler)
     httpd.serve_forever()
 
 
 if __name__ == '__main__':
-    run()
+    import argparse
+    parser = argparse.ArgumentParser(description='HTTP streaming camera.')
+    parser.add_argument('--port', type=int, default=8000,
+                        help='listening port number')
+    args = parser.parse_args()
+    run(port=args.port)
