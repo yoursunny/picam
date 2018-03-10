@@ -26,35 +26,25 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'image/jpeg')
         self.end_headers()
-        camera = PiCamera()
-        try:
+        with PiCamera() as camera:
             camera.resolution = (800, 600)
-            camera.start_preview()
-            time.sleep(1)
-            camera.capture(self.wfile, 'jpeg')
-        finally:
-            camera.close()
+            camera.capture(self.wfile, format='jpeg')
 
     def handleCamMjpeg(self):
         boundary = 'eb4154aac1c9ee636b8a6f5622176d1fbc08d382ee161bbd42e8483808c684b6'
-        frameBeg = 'Content-Type: image/jpeg\n\n'.encode('ascii')
-        frameEnd = ('\n--' + boundary + '\n').encode('ascii')
+        frameBegin = 'Content-Type: image/jpeg\n\n'.encode('ascii')
+        frameBound = ('\n--' + boundary + '\n').encode('ascii') + frameBegin
         self.send_response(200)
         self.send_header(
             'Content-Type', 'multipart/x-mixed-replace;boundary=' + boundary)
         self.end_headers()
-        camera = PiCamera()
-        try:
-            camera.resolution = (320, 240)
-            camera.start_preview()
+        with PiCamera() as camera:
+            camera.resolution = (640, 480)
             time.sleep(1)
-            while True:
-                self.wfile.write(frameBeg)
-                camera.capture(self.wfile, 'jpeg')
-                self.wfile.write(frameEnd)
-                self.wfile.flush()
-        finally:
-            camera.close()
+            self.wfile.write(frameBegin)
+            for dummy in camera.capture_continuous(self.wfile, format='jpeg',
+                                                   use_video_port=True, quality=50):
+                self.wfile.write(frameBound)
 
 
 def run():
