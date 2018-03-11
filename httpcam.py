@@ -24,6 +24,28 @@ class MjpegMixin:
         self.wfile.write(MjpegMixin.frameBound)
 
 
+class SmoothedFpsCalculator:
+    """
+    Provide smoothed frame per second calculation.
+    """
+
+    def __init__(self, alpha=0.1):
+        self.t = time.time()
+        self.alpha = alpha
+        self.sfps = None
+
+    def __call__(self):
+        t = time.time()
+        d = t - self.t
+        self.t = t
+        fps = 1.0 / d
+        if self.sfps is None:
+            self.sfps = fps
+        else:
+            self.sfps = fps * self.alpha + self.sfps * (1.0 - self.alpha)
+        return self.sfps
+
+
 class Handler(BaseHTTPRequestHandler, MjpegMixin):
     def do_GET(self):
         if self.path == '/robots.txt':
@@ -57,28 +79,34 @@ class Handler(BaseHTTPRequestHandler, MjpegMixin):
         self.mjpegBegin()
         with PiCamera() as camera:
             camera.resolution = (640, 480)
+            sfps = SmoothedFpsCalculator()
             for x in camera.capture_continuous(self.wfile, format='jpeg',
                                                use_video_port=True, quality=50):
                 self.mjpegEndFrame()
+                camera.annotate_text = '%0.2f fps' % sfps()
 
     def handleContourMjpeg(self):
-        width, height, blur, sigma = 640, 480, 2, 0.33
         import cv2
         import numpy as np
+        width, height, blur, sigma = 640, 480, 2, 0.33
+        fpsFont, fpsXY = cv2.FONT_HERSHEY_SIMPLEX, (0, height-1)
         self.mjpegBegin()
         with PiCamera() as camera:
             camera.resolution = (width, height)
-            camera.image_denoise = False
+            camera.video_denoise = False
             camera.image_effect = 'blur'
             camera.image_effect_params = (blur,)
             yuv = np.empty((int(width * height * 1.5),), dtype=np.uint8)
-            for x in camera.capture_continuous(yuv, format='yuv', use_video_port=False):
+            sfps = SmoothedFpsCalculator()
+            for x in camera.capture_continuous(yuv, format='yuv', use_video_port=True):
                 image = yuv[:width*height].reshape((height, width))
                 v = np.median(image)
                 lower = int(max(0, (1.0 - sigma) * v))
                 upper = int(min(255, (1.0 + sigma) * v))
-                edged = cv2.Canny(image, lower, upper)
-                self.wfile.write(cv2.imencode('.jpg', edged)[1])
+                image = cv2.Canny(image, lower, upper)
+                cv2.putText(image, '%0.2f fps' %
+                            sfps(), fpsXY, fpsFont, 1.0, 255)
+                self.wfile.write(cv2.imencode('.jpg', image)[1])
                 self.mjpegEndFrame()
 
 
