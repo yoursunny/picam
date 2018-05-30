@@ -1,49 +1,14 @@
 #!/usr/bin/python3
+import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from picamera import PiCamera
+from socketserver import ThreadingMixIn
+
+from mjpeg_util import MjpegMixin, SmoothedFpsCalculator
 
 
-class MjpegMixin:
-    """
-    Add MJPEG features to a subclass of BaseHTTPRequestHandler.
-    """
-
-    mjpegBound = 'eb4154aac1c9ee636b8a6f5622176d1fbc08d382ee161bbd42e8483808c684b6'
-    frameBegin = 'Content-Type: image/jpeg\n\n'.encode('ascii')
-    frameBound = ('\n--' + mjpegBound + '\n').encode('ascii') + frameBegin
-
-    def mjpegBegin(self):
-        self.send_response(200)
-        self.send_header('Content-Type',
-                         'multipart/x-mixed-replace;boundary=' + MjpegMixin.mjpegBound)
-        self.end_headers()
-        self.wfile.write(MjpegMixin.frameBegin)
-
-    def mjpegEndFrame(self):
-        self.wfile.write(MjpegMixin.frameBound)
-
-
-class SmoothedFpsCalculator:
-    """
-    Provide smoothed frame per second calculation.
-    """
-
-    def __init__(self, alpha=0.1):
-        self.t = time.time()
-        self.alpha = alpha
-        self.sfps = None
-
-    def __call__(self):
-        t = time.time()
-        d = t - self.t
-        self.t = t
-        fps = 1.0 / d
-        if self.sfps is None:
-            self.sfps = fps
-        else:
-            self.sfps = fps * self.alpha + self.sfps * (1.0 - self.alpha)
-        return self.sfps
+cameraLock = threading.Lock()
 
 
 class Handler(BaseHTTPRequestHandler, MjpegMixin):
@@ -70,14 +35,14 @@ class Handler(BaseHTTPRequestHandler, MjpegMixin):
         self.send_response(200)
         self.send_header('Content-Type', 'image/jpeg')
         self.end_headers()
-        with PiCamera() as camera:
+        with cameraLock, PiCamera() as camera:
             camera.resolution = (800, 600)
             time.sleep(1)
             camera.capture(self.wfile, format='jpeg')
 
     def handleCamMjpeg(self):
         self.mjpegBegin()
-        with PiCamera() as camera:
+        with cameraLock, PiCamera() as camera:
             camera.resolution = (640, 480)
             sfps = SmoothedFpsCalculator()
             for x in camera.capture_continuous(self.wfile, format='jpeg',
@@ -91,7 +56,7 @@ class Handler(BaseHTTPRequestHandler, MjpegMixin):
         width, height, blur, sigma = 640, 480, 2, 0.33
         fpsFont, fpsXY = cv2.FONT_HERSHEY_SIMPLEX, (0, height-1)
         self.mjpegBegin()
-        with PiCamera() as camera:
+        with cameraLock, PiCamera() as camera:
             camera.resolution = (width, height)
             camera.video_denoise = False
             camera.image_effect = 'blur'
@@ -110,8 +75,12 @@ class Handler(BaseHTTPRequestHandler, MjpegMixin):
                 self.mjpegEndFrame()
 
 
+class ThreadedHttpServer(ThreadingMixIn, HTTPServer):
+    pass
+
+
 def run(port=8000):
-    httpd = HTTPServer(('', port), Handler)
+    httpd = ThreadedHttpServer(('', port), Handler)
     httpd.serve_forever()
 
 
