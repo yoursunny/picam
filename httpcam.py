@@ -1,14 +1,17 @@
 #!/usr/bin/python3
+import cv2
+import datetime
+import numpy as np
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from picamera import PiCamera
 from socketserver import ThreadingMixIn
 
 from mjpeg_util import MjpegMixin, SmoothedFpsCalculator
+from motion import MotionDetector
 
 
-cameraLock = threading.Lock()
+md = MotionDetector()
 
 
 class Handler(BaseHTTPRequestHandler, MjpegMixin):
@@ -21,6 +24,8 @@ class Handler(BaseHTTPRequestHandler, MjpegMixin):
             self.handleCamMjpeg()
         elif self.path == '/contour.mjpeg':
             self.handleContourMjpeg()
+        elif self.path == '/motion.jpg':
+            self.handleMotionJpg()
         else:
             self.send_response(404)
             self.end_headers()
@@ -35,14 +40,14 @@ class Handler(BaseHTTPRequestHandler, MjpegMixin):
         self.send_response(200)
         self.send_header('Content-Type', 'image/jpeg')
         self.end_headers()
-        with cameraLock, PiCamera() as camera:
+        with md.borrowCamera() as camera:
             camera.resolution = (800, 600)
             time.sleep(1)
             camera.capture(self.wfile, format='jpeg')
 
     def handleCamMjpeg(self):
         self.mjpegBegin()
-        with cameraLock, PiCamera() as camera:
+        with md.borrowCamera() as camera:
             camera.resolution = (640, 480)
             sfps = SmoothedFpsCalculator()
             for x in camera.capture_continuous(self.wfile, format='jpeg',
@@ -51,12 +56,10 @@ class Handler(BaseHTTPRequestHandler, MjpegMixin):
                 camera.annotate_text = '%0.2f fps' % sfps()
 
     def handleContourMjpeg(self):
-        import cv2
-        import numpy as np
         width, height, blur, sigma = 640, 480, 2, 0.33
         fpsFont, fpsXY = cv2.FONT_HERSHEY_SIMPLEX, (0, height-1)
         self.mjpegBegin()
-        with cameraLock, PiCamera() as camera:
+        with md.borrowCamera() as camera:
             camera.resolution = (width, height)
             camera.video_denoise = False
             camera.image_effect = 'blur'
@@ -74,12 +77,26 @@ class Handler(BaseHTTPRequestHandler, MjpegMixin):
                 self.wfile.write(cv2.imencode('.jpg', image)[1])
                 self.mjpegEndFrame()
 
+    def handleMotionJpg(self):
+        width, height = 640, 480
+        timeFont, timeXY = cv2.FONT_HERSHEY_SIMPLEX, (0, height-1)
+        self.send_response(200)
+        self.send_header('Content-Type', 'image/jpeg')
+        self.end_headers()
+        if md.lastMotionImage is None:
+            return
+        image = md.lastMotionImage.copy()
+        cv2.putText(image, str(datetime.datetime.utcfromtimestamp(
+            md.lastMotionTime)), timeXY, timeFont, 1.0, 255)
+        self.wfile.write(cv2.imencode('.jpg', image)[1])
+
 
 class ThreadedHttpServer(ThreadingMixIn, HTTPServer):
     pass
 
 
 def run(port=8000):
+    md.start()
     httpd = ThreadedHttpServer(('', port), Handler)
     httpd.serve_forever()
 
